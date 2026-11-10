@@ -34,7 +34,9 @@ h1 { font-size: 22px; margin-bottom: 6px; }
 .spot .num { font-size: 11px; color: #718096; font-weight: 700; letter-spacing: 0.5px; }
 .spot .plate { font-size: 17px; font-weight: 700; margin: 6px 0;
   font-family: 'Courier New', monospace; letter-spacing: 1px; word-break: break-all; }
-.spot .status-text { font-size: 12px; color: #718096; margin-bottom: 10px; flex: 1; }
+.spot .status-text { font-size: 13px; color: #718096; margin-bottom: 10px; flex: 1; margin-top: 6px; }
+.spot .status-text.free { color: #38a169; font-weight: 600; }
+.spot .status-text.mine { color: #2b6cb0; font-weight: 600; }
 .spot button { padding: 8px 10px; border: none; border-radius: 6px;
   font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
 .spot button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -42,6 +44,8 @@ h1 { font-size: 22px; margin-bottom: 6px; }
 .btn-book:hover:not(:disabled) { background: #2f855a; }
 .btn-cancel { background: #e53e3e; color: white; }
 .btn-cancel:hover { background: #c53030; }
+.btn-cancel.admin { background: #4a5568; }
+.btn-cancel.admin:hover { background: #2d3748; }
 .controls { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .btn-admin { background: #4a5568; color: white; padding: 10px 16px;
   border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px; }
@@ -58,6 +62,7 @@ h1 { font-size: 22px; margin-bottom: 6px; }
 .modal input { width: 100%; padding: 12px; font-size: 16px;
   border: 1px solid #cbd5e0; border-radius: 8px; margin-bottom: 12px;
   text-transform: uppercase; font-family: inherit; }
+.modal input[type="password"] { text-transform: none; }
 .modal input:focus { outline: 2px solid #4299e1; border-color: transparent; }
 .modal .row { display: flex; gap: 8px; }
 .modal .row button { flex: 1; padding: 12px; border: none; border-radius: 8px;
@@ -69,6 +74,8 @@ h1 { font-size: 22px; margin-bottom: 6px; }
 .error { color: #e53e3e; font-size: 13px; margin-bottom: 10px; min-height: 16px; }
 .admin-badge { background: #4a5568; color: white; padding: 4px 12px;
   border-radius: 20px; font-size: 12px; display: inline-block; margin-bottom: 14px; font-weight: 600; }
+.info-badge { background: #ebf8ff; color: #2b6cb0; padding: 8px 12px;
+  border-radius: 8px; font-size: 12px; margin-bottom: 14px; text-align: center; }
 </style>
 </head>
 <body>
@@ -79,7 +86,7 @@ h1 { font-size: 22px; margin-bottom: 6px; }
   </header>
 
   <div id="adminBadge" style="display:none; text-align:center;">
-    <span class="admin-badge">👤 Режим администратора</span>
+    <span class="admin-badge">👤 Режим администратора · видны гос. номера</span>
   </div>
 
   <div class="stats">
@@ -88,6 +95,9 @@ h1 { font-size: 22px; margin-bottom: 6px; }
   </div>
 
   <div id="statusBanner" class="status-banner closed">Загрузка...</div>
+  <div id="infoBadge" class="info-badge" style="display:none;">
+    ℹ️ Гос. номера видны только администратору. Отменить свою бронь можно только с того браузера, где бронировали.
+  </div>
 
   <div class="controls">
     <button class="btn-refresh" id="refreshBtn">🔄 Обновить</button>
@@ -97,7 +107,7 @@ h1 { font-size: 22px; margin-bottom: 6px; }
   <div class="spots" id="spotsGrid"></div>
 </div>
 
-<!-- Модальное окно бронирования -->
+<!-- Модалка бронирования -->
 <div class="modal-backdrop" id="bookModal">
   <div class="modal">
     <h2 id="bookModalTitle">Забронировать место</h2>
@@ -110,26 +120,12 @@ h1 { font-size: 22px; margin-bottom: 6px; }
   </div>
 </div>
 
-<!-- Модальное окно отмены -->
-<div class="modal-backdrop" id="cancelModal">
-  <div class="modal">
-    <h2>Отменить бронь</h2>
-    <div class="error" id="cancelError"></div>
-    <p>Подтвердите отмену, введя ваш гос. номер:</p>
-    <input type="text" id="cancelPlateInput" placeholder="Гос. номер" maxlength="20" autocomplete="off">
-    <div class="row">
-      <button class="btn-secondary" onclick="closeCancelModal()">Отмена</button>
-      <button class="btn-cancel" onclick="submitCancel()">Отменить</button>
-    </div>
-  </div>
-</div>
-
-<!-- Модальное окно входа админа -->
+<!-- Модалка входа админа -->
 <div class="modal-backdrop" id="adminLoginModal">
   <div class="modal">
     <h2>Вход для администратора</h2>
     <div class="error" id="adminError"></div>
-    <input type="password" id="adminPasswordInput" placeholder="Пароль" autocomplete="off" style="text-transform:none;">
+    <input type="password" id="adminPasswordInput" placeholder="Пароль" autocomplete="off">
     <div class="row">
       <button class="btn-secondary" onclick="closeAdminLogin()">Отмена</button>
       <button class="btn-primary" onclick="submitAdminLogin()">Войти</button>
@@ -141,8 +137,10 @@ h1 { font-size: 22px; margin-bottom: 6px; }
 let currentState = null;
 let adminPassword = null;
 let pendingBookSpot = null;
-let pendingCancelSpot = null;
-let myPlate = localStorage.getItem('myPlate') || '';
+let lastPlate = localStorage.getItem('lastPlate') || '';
+
+// Токены храним в localStorage: { date: "YYYY-MM-DD", tokens: { "1": "hex", ... } }
+let tokenStore = JSON.parse(localStorage.getItem('myParkingTokens') || '{"date":"","tokens":{}}');
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
@@ -152,17 +150,28 @@ async function api(path, options = {}) {
 }
 
 async function loadStatus() {
+  // Передаём пароль только если он уже введён в этой сессии
+  const url = '/api/status' + (adminPassword ? '?admin=' + encodeURIComponent(adminPassword) : '');
   try {
-    currentState = await api('/api/status');
+    currentState = await api(url);
     render();
   } catch {
     document.getElementById('statusBanner').textContent = 'Ошибка соединения с сервером';
   }
 }
 
+function saveTokenStore() {
+  localStorage.setItem('myParkingTokens', JSON.stringify(tokenStore));
+}
+
 function render() {
   if (!currentState) return;
   const { spots, totalSpots, canBook, date, serverTime } = currentState;
+
+  if (tokenStore.date !== date) {
+    tokenStore = { date: date, tokens: {} };
+    saveTokenStore();
+  }
 
   const dt = new Date(serverTime);
   const timeStr = dt.toLocaleTimeString('ru-RU',
@@ -183,29 +192,52 @@ function render() {
     banner.textContent = '⏰ Бронирование закрыто. Открывается ежедневно в 06:01.';
   }
 
+  document.getElementById('infoBadge').style.display = adminPassword ? 'none' : 'block';
+
   const grid = document.getElementById('spotsGrid');
   grid.innerHTML = '';
+
   for (let i = 1; i <= totalSpots; i++) {
     const booking = spots[i];
-    const isMine = booking && myPlate && booking.plate.toUpperCase() === myPlate.toUpperCase();
+    const myToken = tokenStore.tokens[i];
+    const isMine = !!(booking && myToken);
     const el = document.createElement('div');
-    el.className = 'spot' + (booking ? ' booked' : '') + (isMine ? ' mine' : '');
 
     if (!booking) {
+      el.className = 'spot';
       el.innerHTML = `
         <div class="num">МЕСТО ${i}</div>
-        <div class="status-text" style="margin-top:6px;color:#38a169;font-weight:600;">Свободно</div>
-        <button class="btn-book" ${!canBook ? 'disabled' : ''} onclick="openBookModal(${i})">Забронировать</button>`;
+        <div class="status-text free">Свободно</div>
+        <button class="btn-book" ${!canBook ? 'disabled' : ''}>Забронировать</button>`;
+      el.querySelector('button').onclick = () => openBookModal(i);
     } else {
-      el.innerHTML = `
-        <div class="num">МЕСТО ${i}</div>
-        <div class="plate">${escapeHtml(booking.plate)}</div>
-        <div class="status-text">${isMine ? '✅ Ваша бронь' : 'Забронировано'}</div>
-        <button class="btn-cancel">${isMine ? 'Отменить' : 'Это моя бронь'}</button>`;
-      el.querySelector('button').onclick = () => handleCancel(i, isMine);
+      el.className = 'spot booked' + (isMine ? ' mine' : '');
+
+      // Гос. номер показываем ТОЛЬКО администратору.
+      // Всем остальным (включая владельца) — только статус.
+      let bodyHtml = `<div class="num">МЕСТО ${i}</div>`;
+      if (adminPassword && booking.plate) {
+        bodyHtml += `<div class="plate">${escapeHtml(booking.plate)}</div>`;
+      }
+      if (isMine) {
+        bodyHtml += `<div class="status-text mine">✅ Ваша бронь</div>`;
+      } else {
+        bodyHtml += `<div class="status-text">🔒 Забронировано</div>`;
+      }
+
+      let buttonHtml = '';
       if (adminPassword) {
-        el.querySelector('button').textContent = 'Отменить (админ)';
+        buttonHtml = '<button class="btn-cancel admin">Отменить (админ)</button>';
+      } else if (isMine) {
+        buttonHtml = '<button class="btn-cancel">Отменить мою бронь</button>';
+      }
+
+      el.innerHTML = bodyHtml + buttonHtml;
+
+      if (adminPassword) {
         el.querySelector('button').onclick = () => adminCancel(i);
+      } else if (isMine) {
+        el.querySelector('button').onclick = () => userCancel(i);
       }
     }
     grid.appendChild(el);
@@ -225,7 +257,7 @@ function openBookModal(spot) {
   pendingBookSpot = spot;
   document.getElementById('bookModalTitle').textContent = `Забронировать место ${spot}`;
   document.getElementById('bookError').textContent = '';
-  document.getElementById('plateInput').value = myPlate;
+  document.getElementById('plateInput').value = lastPlate;
   document.getElementById('bookModal').classList.add('show');
   setTimeout(() => document.getElementById('plateInput').focus(), 50);
 }
@@ -240,44 +272,33 @@ async function submitBook() {
     method: 'POST', body: JSON.stringify({ spot: pendingBookSpot, plate })
   });
   if (res.error) { document.getElementById('bookError').textContent = res.error; return; }
-  myPlate = plate;
-  localStorage.setItem('myPlate', myPlate);
+
+  if (res.token) {
+    tokenStore.tokens[pendingBookSpot] = res.token;
+    saveTokenStore();
+  }
+  lastPlate = plate;
+  localStorage.setItem('lastPlate', plate);
+
   closeBookModal();
   await loadStatus();
 }
 
-// ── Отмена пользователем ──
-function handleCancel(spot, isMine) {
-  if (adminPassword) { adminCancel(spot); return; }
-  if (isMine) {
-    if (confirm('Отменить вашу бронь?')) doUserCancel(spot, myPlate);
-  } else {
-    pendingCancelSpot = spot;
-    document.getElementById('cancelError').textContent = '';
-    document.getElementById('cancelPlateInput').value = '';
-    document.getElementById('cancelModal').classList.add('show');
-    setTimeout(() => document.getElementById('cancelPlateInput').focus(), 50);
-  }
-}
-function closeCancelModal() {
-  document.getElementById('cancelModal').classList.remove('show');
-  pendingCancelSpot = null;
-}
-async function submitCancel() {
-  const plate = document.getElementById('cancelPlateInput').value.trim().toUpperCase();
-  if (!plate) { document.getElementById('cancelError').textContent = 'Введите гос. номер'; return; }
-  await doUserCancel(pendingCancelSpot, plate, true);
-}
-async function doUserCancel(spot, plate, fromModal = false) {
-  const res = await api('/api/cancel', {
-    method: 'POST', body: JSON.stringify({ spot, plate })
-  });
-  if (res.error) {
-    if (fromModal) document.getElementById('cancelError').textContent = res.error;
-    else alert(res.error);
+// ── Отмена владельцем (по токену) ──
+async function userCancel(spot) {
+  const token = tokenStore.tokens[spot];
+  if (!token) {
+    alert('Нет доступа к этой брони. Возможно, она была оформлена в другом браузере.');
     return;
   }
-  closeCancelModal();
+  if (!confirm(`Отменить вашу бронь на месте ${spot}?`)) return;
+
+  const res = await api('/api/cancel', {
+    method: 'POST', body: JSON.stringify({ spot, token })
+  });
+  if (res.error) { alert(res.error); return; }
+  delete tokenStore.tokens[spot];
+  saveTokenStore();
   await loadStatus();
 }
 
@@ -288,7 +309,7 @@ document.getElementById('adminBtn').addEventListener('click', () => {
       adminPassword = null;
       document.getElementById('adminBadge').style.display = 'none';
       document.getElementById('adminBtn').textContent = '🔒 Админ';
-      render();
+      loadStatus();
     }
     return;
   }
@@ -311,7 +332,8 @@ async function submitAdminLogin() {
   closeAdminLogin();
   document.getElementById('adminBadge').style.display = 'block';
   document.getElementById('adminBtn').textContent = '🔓 Выйти из админа';
-  render();
+  // Перезапрашиваем состояние — теперь с номерами
+  await loadStatus();
 }
 async function adminCancel(spot) {
   if (!adminPassword) return;
